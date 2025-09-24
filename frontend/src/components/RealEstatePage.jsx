@@ -33,48 +33,14 @@ const RealEstatePage = () => {
   const [messages, setMessages] = useState([
     {
       type: 'agent',
-      content: "Hello! I'm your real estate assistant. I can help you with property searches, market analysis, investment advice, and any questions about buying or selling homes. How can I assist you today?"
+      content: "Hello! I'm your real estate assistant. I can help you with information about our property listings, compare properties, and answer questions about our available homes. How can I assist you today?"
     }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [properties, setProperties] = useState([]);
+  const [propertiesLoading, setPropertiesLoading] = useState(true);
   const chatContainerRef = useRef(null);
-
-  const featuredProperties = [
-    {
-      id: 1,
-      title: "Modern Luxury Villa",
-      price: "$2,850,000",
-      location: "Beverly Hills, CA",
-      beds: 5,
-      baths: 4,
-      sqft: 4200,
-      image: "https://images.unsplash.com/photo-1613977257363-707ba9348227?w=600&h=400&fit=crop&crop=center",
-      badge: "Featured"
-    },
-    {
-      id: 2,
-      title: "Downtown Penthouse",
-      price: "$1,200,000",
-      location: "Manhattan, NY",
-      beds: 3,
-      baths: 2,
-      sqft: 2100,
-      image: "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=600&h=400&fit=crop&crop=center",
-      badge: "New"
-    },
-    {
-      id: 3,
-      title: "Seaside Retreat",
-      price: "$950,000",
-      location: "Malibu, CA",
-      beds: 4,
-      baths: 3,
-      sqft: 3200,
-      image: "https://images.unsplash.com/photo-1571939228382-b2f2b585ce15?w=600&h=400&fit=crop&crop=center",
-      badge: "Hot"
-    }
-  ];
 
   const services = [
     {
@@ -104,6 +70,38 @@ const RealEstatePage = () => {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    fetchProperties();
+  }, []);
+
+  const fetchProperties = async () => {
+    try {
+      setPropertiesLoading(true);
+      const response = await axios.get(`${API}/properties`);
+      setProperties(response.data);
+    } catch (error) {
+      console.error('Error fetching properties:', error);
+    } finally {
+      setPropertiesLoading(false);
+    }
+  };
+
+  const formatPrice = (price) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(price);
+  };
+
+  const getBadge = (property, index) => {
+    if (index === 0) return "Featured";
+    if (property.year_built && property.year_built >= 2020) return "New";
+    if (property.price < 1000000) return "Great Value";
+    return "Premium";
+  };
 
   const sendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
@@ -215,46 +213,63 @@ const RealEstatePage = () => {
             <p className="text-xl text-gray-600">Discover our handpicked selection of premium properties</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {featuredProperties.map((property) => (
-              <Card key={property.id} className="overflow-hidden hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2">
-                <div className="relative">
-                  <img
-                    src={property.image}
-                    alt={property.title}
-                    className="w-full h-64 object-cover"
-                  />
-                  <Badge className="absolute top-4 left-4 bg-blue-600">
-                    {property.badge}
-                  </Badge>
-                </div>
-                <CardContent className="p-6">
-                  <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-xl font-bold text-gray-900">{property.title}</h3>
-                    <span className="text-2xl font-bold text-blue-600">{property.price}</span>
+          {propertiesLoading ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="text-lg text-gray-600">Loading properties...</div>
+            </div>
+          ) : properties.length === 0 ? (
+            <div className="text-center py-12">
+              <Home className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No properties available</h3>
+              <p className="text-gray-600">Check back soon for new listings!</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {properties.slice(0, 6).map((property, index) => (
+                <Card key={property.id} className="overflow-hidden hover:shadow-xl transition-all duration-300 transform hover:-translate-y-2">
+                  <div className="relative">
+                    <img
+                      src={property.image_url}
+                      alt={property.title}
+                      className="w-full h-64 object-cover"
+                      onError={(e) => {
+                        e.target.src = "https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=600&h=400&fit=crop&crop=center";
+                      }}
+                    />
+                    <Badge className="absolute top-4 left-4 bg-blue-600">
+                      {getBadge(property, index)}
+                    </Badge>
                   </div>
-                  <div className="flex items-center text-gray-600 mb-4">
-                    <MapPin className="h-4 w-4 mr-1" />
-                    <span className="text-sm">{property.location}</span>
-                  </div>
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <div className="flex items-center">
-                      <Bed className="h-4 w-4 mr-1" />
-                      {property.beds} beds
+                  <CardContent className="p-6">
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="text-xl font-bold text-gray-900 flex-1 mr-2">{property.title}</h3>
+                      <span className="text-2xl font-bold text-blue-600 whitespace-nowrap">
+                        {formatPrice(property.price)}
+                      </span>
                     </div>
-                    <div className="flex items-center">
-                      <Bath className="h-4 w-4 mr-1" />
-                      {property.baths} baths
+                    <div className="flex items-center text-gray-600 mb-4">
+                      <MapPin className="h-4 w-4 mr-1 flex-shrink-0" />
+                      <span className="text-sm">{property.location}</span>
                     </div>
-                    <div className="flex items-center">
-                      <Square className="h-4 w-4 mr-1" />
-                      {property.sqft} sqft
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <div className="flex items-center">
+                        <Bed className="h-4 w-4 mr-1" />
+                        {property.bedrooms} beds
+                      </div>
+                      <div className="flex items-center">
+                        <Bath className="h-4 w-4 mr-1" />
+                        {property.bathrooms} baths
+                      </div>
+                      <div className="flex items-center">
+                        <Square className="h-4 w-4 mr-1" />
+                        {property.sqft} sqft
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -331,6 +346,7 @@ const RealEstatePage = () => {
                 <li><a href="#" className="hover:text-white transition-colors">Sell Properties</a></li>
                 <li><a href="#" className="hover:text-white transition-colors">Market Analysis</a></li>
                 <li><a href="#" className="hover:text-white transition-colors">Investment Guide</a></li>
+                <li><a href="/admin" className="hover:text-white transition-colors text-blue-400">Admin Panel</a></li>
               </ul>
             </div>
             <div>

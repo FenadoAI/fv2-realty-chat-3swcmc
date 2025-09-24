@@ -149,24 +149,27 @@ class ChatAgent(BaseAgent):
 class RealEstateAgent(BaseAgent):
     # Specialized real estate chat agent
 
-    def __init__(self, config: AgentConfig):
-        system_prompt = """You are an expert real estate assistant with extensive knowledge of the property market.
-        Your role is to help users with:
-        - Property buying and selling advice
-        - Market analysis and trends
-        - Neighborhood information and amenities
-        - Property valuation insights
-        - Investment opportunities
-        - Mortgage and financing guidance
-        - Home inspection tips
-        - Legal considerations in real estate
+    def __init__(self, config: AgentConfig, db_client=None):
+        self.db_client = db_client
 
-        Always be professional, knowledgeable, and helpful. Provide accurate, up-to-date information while being clear about when users should consult with licensed professionals for specific legal or financial advice.
-        Keep responses conversational and engaging while maintaining expertise."""
+        system_prompt = """You are an expert real estate assistant for our property listings platform.
+
+IMPORTANT: You can ONLY discuss properties that are currently listed in our database. Do NOT discuss or recommend properties that are not in our inventory.
+
+Your role is to help users with our listed properties by:
+- Describing specific properties from our inventory
+- Comparing properties in our listings
+- Answering questions about features, pricing, and details of our listed properties
+- Providing guidance on which of our properties might suit their needs
+- General real estate advice related to buying/selling process
+
+ALWAYS base your responses on the property data provided to you. If asked about properties not in our database, politely redirect them to browse our available listings.
+
+Be professional, knowledgeable, and helpful while staying focused on our property inventory."""
 
         super().__init__(config, system_prompt)
 
-        # Setup web search for current market data
+        # Setup web search for current market data (optional)
         self.setup_real_estate_mcp()
 
     def setup_real_estate_mcp(self):
@@ -183,13 +186,90 @@ class RealEstateAgent(BaseAgent):
         else:
             logger.warning("CODEXHUB_MCP_AUTH_TOKEN not found, real estate web search disabled")
 
+    async def get_properties_context(self):
+        # Fetch current property listings for context
+        if not self.db_client:
+            return "No database connection available."
+
+        try:
+            db = self.db_client[os.getenv('DB_NAME', 'ai_agents')]
+            properties = await db.properties.find({"status": "active"}).limit(50).to_list(50)
+
+            if not properties:
+                return "No active properties found in our database."
+
+            # Format properties for AI context
+            properties_text = "CURRENT PROPERTY LISTINGS:\n\n"
+            for prop in properties:
+                properties_text += f"""
+Property: {prop.get('title', 'N/A')}
+Price: ${prop.get('price', 0):,}
+Location: {prop.get('location', 'N/A')}
+Address: {prop.get('address', 'N/A')}
+Bedrooms: {prop.get('bedrooms', 'N/A')} | Bathrooms: {prop.get('bathrooms', 'N/A')} | Size: {prop.get('sqft', 'N/A')} sqft
+Type: {prop.get('property_type', 'N/A')}
+Description: {prop.get('description', 'N/A')}
+Amenities: {', '.join(prop.get('amenities', []))}
+MLS: {prop.get('mls_number', 'N/A')}
+---"""
+
+            return properties_text
+
+        except Exception as e:
+            logger.error(f"Error fetching properties context: {e}")
+            return "Unable to fetch current property listings."
+
+    async def execute(self, prompt: str, use_tools: bool = True) -> AgentResponse:
+        # Execute agent with property context
+        try:
+            # Get current property listings
+            properties_context = await self.get_properties_context()
+
+            # Enhanced prompt with property context
+            enhanced_prompt = f"""{properties_context}
+
+USER QUESTION: {prompt}
+
+Remember: Only discuss the properties listed above. If the user asks about properties not in our listings, politely redirect them to our available inventory."""
+
+            messages = [
+                SystemMessage(content=self.system_prompt),
+                HumanMessage(content=enhanced_prompt)
+            ]
+
+            # Use MCP tools if available
+            if use_tools and self.mcp_client and self.mcp_tools:
+                # Agent with tools
+                agent_executor = self.llm.bind_tools(self.mcp_tools)
+                response = await agent_executor.ainvoke(messages)
+            else:
+                # LLM without tools
+                response = await self.llm.ainvoke(messages)
+
+            return AgentResponse(
+                success=True,
+                content=response.content,
+                metadata={
+                    "model": self.config.model_name,
+                    "tools_used": len(self.mcp_tools) if use_tools else 0,
+                    "properties_count": properties_context.count("Property:") if properties_context else 0
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error executing real estate agent: {e}")
+            return AgentResponse(
+                success=False,
+                content="",
+                error=str(e)
+            )
+
     def get_capabilities(self) -> List[str]:
         capabilities = super().get_capabilities()
         capabilities.extend([
             "real_estate_expertise",
-            "market_analysis",
-            "property_valuation",
-            "investment_advice",
-            "neighborhood_insights"
+            "property_listings",
+            "property_comparison",
+            "inventory_focused"
         ])
         return capabilities

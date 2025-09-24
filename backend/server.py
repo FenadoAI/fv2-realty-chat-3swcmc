@@ -44,6 +44,63 @@ class StatusCheck(BaseModel):
 class StatusCheckCreate(BaseModel):
     client_name: str
 
+# Property models
+class Property(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: str
+    price: int  # Price in dollars
+    location: str
+    address: str
+    bedrooms: int
+    bathrooms: int
+    sqft: int
+    property_type: str  # "house", "condo", "apartment", "townhouse"
+    status: str = "active"  # "active", "sold", "pending"
+    image_url: str
+    amenities: List[str] = Field(default_factory=list)
+    year_built: Optional[int] = None
+    garage: Optional[int] = None
+    lot_size: Optional[float] = None
+    mls_number: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class PropertyCreate(BaseModel):
+    title: str
+    description: str
+    price: int
+    location: str
+    address: str
+    bedrooms: int
+    bathrooms: int
+    sqft: int
+    property_type: str
+    image_url: str
+    amenities: List[str] = Field(default_factory=list)
+    year_built: Optional[int] = None
+    garage: Optional[int] = None
+    lot_size: Optional[float] = None
+    mls_number: Optional[str] = None
+
+class PropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[int] = None
+    location: Optional[str] = None
+    address: Optional[str] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[int] = None
+    sqft: Optional[int] = None
+    property_type: Optional[str] = None
+    status: Optional[str] = None
+    image_url: Optional[str] = None
+    amenities: Optional[List[str]] = None
+    year_built: Optional[int] = None
+    garage: Optional[int] = None
+    lot_size: Optional[float] = None
+    mls_number: Optional[str] = None
+
 
 # AI agent models
 class ChatRequest(BaseModel):
@@ -107,7 +164,7 @@ async def chat_with_agent(request: ChatRequest):
             chat_agent = ChatAgent(agent_config)
 
         elif request.agent_type == "real_estate" and real_estate_agent is None:
-            real_estate_agent = RealEstateAgent(agent_config)
+            real_estate_agent = RealEstateAgent(agent_config, client)
 
         # Select agent
         if request.agent_type == "search":
@@ -192,7 +249,7 @@ async def get_agent_capabilities():
         capabilities = {
             "search_agent": SearchAgent(agent_config).get_capabilities(),
             "chat_agent": ChatAgent(agent_config).get_capabilities(),
-            "real_estate_agent": RealEstateAgent(agent_config).get_capabilities()
+            "real_estate_agent": RealEstateAgent(agent_config, client).get_capabilities()
         }
         return {
             "success": True,
@@ -204,6 +261,182 @@ async def get_agent_capabilities():
             "success": False,
             "error": str(e)
         }
+
+
+# Property CRUD routes
+@api_router.post("/properties", response_model=Property)
+async def create_property(property_data: PropertyCreate):
+    property_obj = Property(**property_data.dict())
+    result = await db.properties.insert_one(property_obj.dict())
+    return property_obj
+
+@api_router.get("/properties", response_model=List[Property])
+async def get_properties(
+    status: str = "active",
+    property_type: Optional[str] = None,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    bedrooms: Optional[int] = None,
+    limit: int = 100
+):
+    query = {"status": status}
+
+    if property_type:
+        query["property_type"] = property_type
+    if min_price is not None:
+        query.setdefault("price", {})["$gte"] = min_price
+    if max_price is not None:
+        query.setdefault("price", {})["$lte"] = max_price
+    if bedrooms is not None:
+        query["bedrooms"] = bedrooms
+
+    properties = await db.properties.find(query).limit(limit).to_list(limit)
+    return [Property(**prop) for prop in properties]
+
+@api_router.get("/properties/{property_id}", response_model=Property)
+async def get_property(property_id: str):
+    property_data = await db.properties.find_one({"id": property_id})
+    if not property_data:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return Property(**property_data)
+
+@api_router.put("/properties/{property_id}", response_model=Property)
+async def update_property(property_id: str, property_data: PropertyUpdate):
+    existing_property = await db.properties.find_one({"id": property_id})
+    if not existing_property:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    update_data = {k: v for k, v in property_data.dict().items() if v is not None}
+    update_data["updated_at"] = datetime.utcnow()
+
+    await db.properties.update_one({"id": property_id}, {"$set": update_data})
+    updated_property = await db.properties.find_one({"id": property_id})
+    return Property(**updated_property)
+
+@api_router.delete("/properties/{property_id}")
+async def delete_property(property_id: str):
+    result = await db.properties.delete_one({"id": property_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return {"message": "Property deleted successfully"}
+
+@api_router.post("/seed-properties")
+async def seed_properties():
+    # Check if properties already exist
+    existing_count = await db.properties.count_documents({})
+    if existing_count > 0:
+        return {"message": f"Properties already exist ({existing_count} found). Skipping seed."}
+
+    sample_properties = [
+        {
+            "title": "Modern Luxury Villa",
+            "description": "Stunning modern villa with breathtaking views, premium finishes, and state-of-the-art amenities. Features an open-concept design with floor-to-ceiling windows, gourmet kitchen, and expansive outdoor living space.",
+            "price": 2850000,
+            "location": "Beverly Hills, CA",
+            "address": "1234 Beverly Drive, Beverly Hills, CA 90210",
+            "bedrooms": 5,
+            "bathrooms": 4,
+            "sqft": 4200,
+            "property_type": "house",
+            "image_url": "https://images.unsplash.com/photo-1613977257363-707ba9348227?w=600&h=400&fit=crop&crop=center",
+            "amenities": ["Pool", "Spa", "Wine Cellar", "Home Theater", "Gym", "Smart Home"],
+            "year_built": 2021,
+            "garage": 3,
+            "lot_size": 0.75,
+            "mls_number": "BH2024001"
+        },
+        {
+            "title": "Downtown Penthouse",
+            "description": "Luxurious penthouse in the heart of Manhattan with panoramic city views. Features premium finishes, floor-to-ceiling windows, and access to building's exclusive amenities including rooftop terrace and concierge services.",
+            "price": 1200000,
+            "location": "Manhattan, NY",
+            "address": "567 Park Avenue, New York, NY 10022",
+            "bedrooms": 3,
+            "bathrooms": 2,
+            "sqft": 2100,
+            "property_type": "condo",
+            "image_url": "https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=600&h=400&fit=crop&crop=center",
+            "amenities": ["Doorman", "Rooftop Deck", "Gym", "Storage", "Laundry"],
+            "year_built": 2018,
+            "garage": 1,
+            "mls_number": "NY2024002"
+        },
+        {
+            "title": "Seaside Retreat",
+            "description": "Charming coastal home with direct beach access and stunning ocean views. Perfect for those seeking a peaceful retreat with modern comforts and beachside living at its finest.",
+            "price": 950000,
+            "location": "Malibu, CA",
+            "address": "789 Pacific Coast Highway, Malibu, CA 90265",
+            "bedrooms": 4,
+            "bathrooms": 3,
+            "sqft": 3200,
+            "property_type": "house",
+            "image_url": "https://images.unsplash.com/photo-1571939228382-b2f2b585ce15?w=600&h=400&fit=crop&crop=center",
+            "amenities": ["Beach Access", "Ocean View", "Deck", "Fireplace", "Updated Kitchen"],
+            "year_built": 2015,
+            "garage": 2,
+            "lot_size": 0.5,
+            "mls_number": "ML2024003"
+        },
+        {
+            "title": "Historic Brownstone",
+            "description": "Beautifully restored historic brownstone in prime Brooklyn location. Combines original architectural details with modern updates. Perfect blend of character and contemporary living.",
+            "price": 875000,
+            "location": "Brooklyn, NY",
+            "address": "123 Brooklyn Heights Promenade, Brooklyn, NY 11201",
+            "bedrooms": 3,
+            "bathrooms": 2,
+            "sqft": 2800,
+            "property_type": "townhouse",
+            "image_url": "https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=600&h=400&fit=crop&crop=center",
+            "amenities": ["Original Details", "Garden", "Updated Kitchen", "Hardwood Floors"],
+            "year_built": 1920,
+            "garage": 0,
+            "lot_size": 0.15,
+            "mls_number": "BK2024004"
+        },
+        {
+            "title": "Mountain View Estate",
+            "description": "Spectacular estate home with panoramic mountain views and luxurious amenities. Situated on a private lot with extensive outdoor living spaces and premium finishes throughout.",
+            "price": 1650000,
+            "location": "Aspen, CO",
+            "address": "456 Alpine Drive, Aspen, CO 81611",
+            "bedrooms": 6,
+            "bathrooms": 5,
+            "sqft": 5500,
+            "property_type": "house",
+            "image_url": "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=600&h=400&fit=crop&crop=center",
+            "amenities": ["Mountain Views", "Hot Tub", "Fireplace", "Ski Storage", "Wine Cellar", "Guest House"],
+            "year_built": 2019,
+            "garage": 4,
+            "lot_size": 2.0,
+            "mls_number": "AS2024005"
+        },
+        {
+            "title": "Urban Loft",
+            "description": "Contemporary loft in converted warehouse with exposed brick, high ceilings, and industrial charm. Located in trendy arts district with walkable access to galleries, restaurants, and nightlife.",
+            "price": 625000,
+            "location": "Austin, TX",
+            "address": "789 Industrial Blvd, Austin, TX 78701",
+            "bedrooms": 2,
+            "bathrooms": 2,
+            "sqft": 1800,
+            "property_type": "condo",
+            "image_url": "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600&h=400&fit=crop&crop=center",
+            "amenities": ["Exposed Brick", "High Ceilings", "Modern Appliances", "Rooftop Access"],
+            "year_built": 2017,
+            "garage": 1,
+            "mls_number": "AU2024006"
+        }
+    ]
+
+    properties = []
+    for prop_data in sample_properties:
+        property_obj = Property(**prop_data)
+        properties.append(property_obj.dict())
+
+    result = await db.properties.insert_many(properties)
+    return {"message": f"Successfully seeded {len(result.inserted_ids)} properties"}
 
 # Include router
 app.include_router(api_router)
