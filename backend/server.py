@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 
 # AI agents
-from ai_agents.agents import AgentConfig, SearchAgent, ChatAgent
+from ai_agents.agents import AgentConfig, SearchAgent, ChatAgent, RealEstateAgent
 
 
 ROOT_DIR = Path(__file__).parent
@@ -26,6 +26,7 @@ db = client[os.environ['DB_NAME']]
 agent_config = AgentConfig()
 search_agent: Optional[SearchAgent] = None
 chat_agent: Optional[ChatAgent] = None
+real_estate_agent: Optional[RealEstateAgent] = None
 
 # Main app
 app = FastAPI(title="AI Agents API", description="Minimal AI Agents API with LangGraph and MCP support")
@@ -47,7 +48,7 @@ class StatusCheckCreate(BaseModel):
 # AI agent models
 class ChatRequest(BaseModel):
     message: str
-    agent_type: str = "chat"  # "chat" or "search"
+    agent_type: str = "chat"  # "chat", "search", or "real_estate"
     context: Optional[dict] = None
 
 
@@ -95,18 +96,26 @@ async def get_status_checks():
 @api_router.post("/chat", response_model=ChatResponse)
 async def chat_with_agent(request: ChatRequest):
     # Chat with AI agent
-    global search_agent, chat_agent
-    
+    global search_agent, chat_agent, real_estate_agent
+
     try:
         # Init agents if needed
         if request.agent_type == "search" and search_agent is None:
             search_agent = SearchAgent(agent_config)
-            
+
         elif request.agent_type == "chat" and chat_agent is None:
             chat_agent = ChatAgent(agent_config)
-        
+
+        elif request.agent_type == "real_estate" and real_estate_agent is None:
+            real_estate_agent = RealEstateAgent(agent_config)
+
         # Select agent
-        agent = search_agent if request.agent_type == "search" else chat_agent
+        if request.agent_type == "search":
+            agent = search_agent
+        elif request.agent_type == "real_estate":
+            agent = real_estate_agent
+        else:
+            agent = chat_agent
         
         if agent is None:
             raise HTTPException(status_code=500, detail="Failed to initialize agent")
@@ -182,7 +191,8 @@ async def get_agent_capabilities():
     try:
         capabilities = {
             "search_agent": SearchAgent(agent_config).get_capabilities(),
-            "chat_agent": ChatAgent(agent_config).get_capabilities()
+            "chat_agent": ChatAgent(agent_config).get_capabilities(),
+            "real_estate_agent": RealEstateAgent(agent_config).get_capabilities()
         }
         return {
             "success": True,
@@ -216,9 +226,9 @@ logger = logging.getLogger(__name__)
 @app.on_event("startup")
 async def startup_event():
     # Initialize agents on startup
-    global search_agent, chat_agent
+    global search_agent, chat_agent, real_estate_agent
     logger.info("Starting AI Agents API...")
-    
+
     # Lazy agent init for faster startup
     logger.info("AI Agents API ready!")
 
@@ -226,12 +236,15 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     # Cleanup on shutdown
-    global search_agent, chat_agent
-    
+    global search_agent, chat_agent, real_estate_agent
+
     # Close MCP
     if search_agent and search_agent.mcp_client:
         # MCP cleanup automatic
         pass
-    
+    if real_estate_agent and real_estate_agent.mcp_client:
+        # MCP cleanup automatic
+        pass
+
     client.close()
     logger.info("AI Agents API shutdown complete.")

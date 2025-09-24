@@ -139,8 +139,57 @@ class SearchAgent(BaseAgent):
 
 class ChatAgent(BaseAgent):
     # General chat and assistance agent
-    
+
     def __init__(self, config: AgentConfig):
         system_prompt = "Friendly conversational AI. Natural conversations, explanations, analysis. Helpful, harmless, honest."
-        
+
         super().__init__(config, system_prompt)
+
+
+class RealEstateAgent(BaseAgent):
+    # Specialized real estate chat agent
+
+    def __init__(self, config: AgentConfig):
+        system_prompt = """You are an expert real estate assistant with extensive knowledge of the property market.
+        Your role is to help users with:
+        - Property buying and selling advice
+        - Market analysis and trends
+        - Neighborhood information and amenities
+        - Property valuation insights
+        - Investment opportunities
+        - Mortgage and financing guidance
+        - Home inspection tips
+        - Legal considerations in real estate
+
+        Always be professional, knowledgeable, and helpful. Provide accurate, up-to-date information while being clear about when users should consult with licensed professionals for specific legal or financial advice.
+        Keep responses conversational and engaging while maintaining expertise."""
+
+        super().__init__(config, system_prompt)
+
+        # Setup web search for current market data
+        self.setup_real_estate_mcp()
+
+    def setup_real_estate_mcp(self):
+        # Setup web search MCP for real estate market data
+        mcp_token = os.getenv("CODEXHUB_MCP_AUTH_TOKEN")
+        if mcp_token and mcp_token != "dummy-key":
+            server_configs = [{
+                "type": "http",
+                "url": "https://mcp.codexhub.ai/web/mcp",
+                "headers": {"x-team-key": mcp_token}
+            }]
+            self.setup_mcp(server_configs)
+            logger.info("Real estate web search MCP configured")
+        else:
+            logger.warning("CODEXHUB_MCP_AUTH_TOKEN not found, real estate web search disabled")
+
+    def get_capabilities(self) -> List[str]:
+        capabilities = super().get_capabilities()
+        capabilities.extend([
+            "real_estate_expertise",
+            "market_analysis",
+            "property_valuation",
+            "investment_advice",
+            "neighborhood_insights"
+        ])
+        return capabilities
